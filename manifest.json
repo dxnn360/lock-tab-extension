@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "TabLock - Browser Tab Locker",
+  "version": "1.0.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsnTTKrES0uyh91VGoZznxM9OqS9tnU7xgicE0yXanjwBLGL/gDixkpjalLqfZ1p6dprJOWCOsfPhLNErWsNlwd/kXbWqYQ0F5a457LPmTlSwKYBTFiS15fzRcNwnFBARUQdbA5zY9otJLJKIOv+MOKwcYLy6XVcHX5DHUU6UCt7QMShqbt9Z0yhk8SuC9/y1ZpTSbV3uGl4Bdjo9B7ZmYLJ5RG/SzO5tbPPLClPZwnrAfmTIlD2w0SjYgVC8T5b6fND1qEGa8rzcaiOrGeMZRSVKYEwocoO4zqC8uWyyqUWm9Cw27HvXDnksSiKRvgCsRTGYfxPBy69GJ8GjrnrwsQIDAQAB",
+  "description": "Lock and secure your browser tabs with a password.",
+  "permissions": [
+    "tabs",
+    "storage",
+    "activeTab",
+    "contextMenus",
+    "alarms"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
