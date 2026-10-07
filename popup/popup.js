@@ -1,11 +1,3 @@
-async function hashPassword(password) {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
 function showToast(message, duration = 2000) {
   const toast = document.getElementById("toast");
   toast.textContent = message;
@@ -60,8 +52,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // Check password status and current tab auto-lock configuration
   async function checkPasswordState() {
-    const { passwordHash, lockedTabs = {}, autoLockTabs = {} } = await chrome.storage.local.get([
-      "passwordHash",
+    const { authConfig, lockedTabs = {}, autoLockTabs = {} } = await chrome.storage.local.get([
+      "authConfig",
       "lockedTabs",
       "autoLockTabs"
     ]);
@@ -69,7 +61,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     lockedCountEl.textContent = Object.keys(lockedTabs).length;
     autolockCountEl.textContent = Object.keys(autoLockTabs).length;
 
-    if (!passwordHash) {
+    if (!authConfig || !authConfig.salt) {
       setupView.classList.remove("hidden");
       mainView.classList.add("hidden");
       changePwdView.classList.add("hidden");
@@ -134,7 +126,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   // Setup Form Submit (Create initial password)
-  setupForm.addEventListener("submit", async (e) => {
+  setupForm.addEventListener("submit", (e) => {
     e.preventDefault();
     const newPwd = document.getElementById("new-password").value;
     const confirmPwd = document.getElementById("confirm-password").value;
@@ -148,10 +140,12 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
-    const hash = await hashPassword(newPwd);
-    await chrome.storage.local.set({ passwordHash: hash });
-    showToast("Password saved successfully!");
-    setTimeout(() => checkPasswordState(), 500);
+    chrome.runtime.sendMessage({ action: "setPassword", password: newPwd }, (res) => {
+      if (res?.success) {
+        showToast("Password saved securely (PBKDF2)!");
+        setTimeout(() => checkPasswordState(), 500);
+      }
+    });
   });
 
   // Lock Current Tab Button
@@ -176,28 +170,27 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   // Change Password Form Submit
-  changePwdForm.addEventListener("submit", async (e) => {
+  changePwdForm.addEventListener("submit", (e) => {
     e.preventDefault();
     const oldPwd = document.getElementById("old-password").value;
     const updatePwd = document.getElementById("update-password").value;
-
-    const { passwordHash } = await chrome.storage.local.get("passwordHash");
-    const oldHash = await hashPassword(oldPwd);
-
-    if (oldHash !== passwordHash) {
-      showToast("Current password is incorrect!");
-      return;
-    }
 
     if (updatePwd.length < 4) {
       showToast("New password must be at least 4 characters!");
       return;
     }
 
-    const newHash = await hashPassword(updatePwd);
-    await chrome.storage.local.set({ passwordHash: newHash });
-    showToast("Password updated successfully!");
-    changePwdForm.reset();
-    setTimeout(() => checkPasswordState(), 800);
+    chrome.runtime.sendMessage(
+      { action: "changePassword", oldPassword: oldPwd, newPassword: updatePwd },
+      (res) => {
+        if (res?.success) {
+          showToast("Password updated successfully!");
+          changePwdForm.reset();
+          setTimeout(() => checkPasswordState(), 800);
+        } else {
+          showToast(res?.error || "Failed to update password!");
+        }
+      }
+    );
   });
 });

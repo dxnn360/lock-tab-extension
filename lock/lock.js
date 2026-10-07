@@ -1,19 +1,17 @@
 document.addEventListener("DOMContentLoaded", () => {
   const urlParams = new URLSearchParams(window.location.search);
-  const targetUrl = urlParams.get("url") || "";
-  const targetTitle = urlParams.get("title") || "";
+  const sessionToken = urlParams.get("token") || "";
 
-  const lockedTabTitleEl = document.getElementById("locked-tab-title");
   const form = document.getElementById("unlock-form");
   const passwordInput = document.getElementById("password-input");
   const errorMsg = document.getElementById("error-msg");
+  const btnUnlock = document.getElementById("btn-unlock");
 
-  if (targetTitle || targetUrl) {
-    lockedTabTitleEl.textContent = targetTitle || targetUrl;
-    document.title = `Locked: ${targetTitle || "Tab"}`;
-  } else {
-    lockedTabTitleEl.textContent = "Protected Tab";
-  }
+  // Prevent back button navigation bypass
+  window.history.pushState(null, "", window.location.href);
+  window.onpopstate = () => {
+    window.history.pushState(null, "", window.location.href);
+  };
 
   // Handle submit form
   form.addEventListener("submit", (e) => {
@@ -23,16 +21,19 @@ document.addEventListener("DOMContentLoaded", () => {
     const password = passwordInput.value;
     if (!password) return;
 
+    btnUnlock.disabled = true;
+
     chrome.runtime.sendMessage(
       {
         action: "unlockTab",
         password: password,
-        targetUrl: targetUrl
+        token: sessionToken
       },
       (response) => {
+        btnUnlock.disabled = false;
         if (response && response.success) {
           if (response.targetUrl) {
-            window.location.href = response.targetUrl;
+            window.location.replace(response.targetUrl);
           }
         } else {
           errorMsg.textContent = response?.error || "Incorrect password. Please try again.";

@@ -1,17 +1,11 @@
-// Helper SHA-256 Hash
-async function hashPassword(password) {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
+// Import Crypto helper functions
+importScripts('crypto.js');
 
 // Initialize right-click context menu
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
     id: "lock-current-tab",
-    title: "🔒 Lock This Tab",
+    title: "Lock This Tab",
     contexts: ["page"]
   });
 });
@@ -22,58 +16,96 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
-// Fungsi untuk mengunci tab tertentu
+// Generate an unguessable random token for the lock session
+function generateSecureToken() {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Function to lock a specific tab
 async function lockTab(tabId) {
   try {
     const tab = await chrome.tabs.get(tabId);
     if (!tab || !tab.url) return;
 
-    // Cegah mengunci halaman lock itu sendiri atau internal browser
+    // Prevent locking the lock screen itself or browser internals
     const lockPageUrl = chrome.runtime.getURL("lock/lock.html");
     if (tab.url.startsWith(lockPageUrl) || tab.url.startsWith("chrome://") || tab.url.startsWith("edge://")) {
       return;
     }
 
-    const { lockedTabs = {} } = await chrome.storage.local.get("lockedTabs");
-    
-    // Simpan URL asli & favicon/title
-    lockedTabs[tabId] = {
-      targetUrl: tab.url,
-      title: tab.title || "Locked Tab",
-      favicon: tab.favIconUrl || "",
+    const { authConfig, lockedTabs = {} } = await chrome.storage.local.get(["authConfig", "lockedTabs"]);
+
+    // If master password is not yet configured, do nothing
+    if (!authConfig || !authConfig.salt) {
+      return;
+    }
+
+    // Generate random session token
+    const sessionToken = generateSecureToken();
+
+    // ENCRYPT target URL and title using AES-256-GCM
+    // Neither the address bar nor DevTools can read the plain URL!
+    const encryptedData = await encryptWithPassword(
+      JSON.stringify({
+        url: tab.url,
+        title: tab.title || "Target Page",
+        lockedAt: Date.now()
+      }),
+      authConfig.verifier, // Derived key component
+      authConfig.salt
+    );
+
+    lockedTabs[sessionToken] = {
+      tabId: tabId,
+      encryptedPayload: encryptedData,
       lockedAt: Date.now()
     };
 
     await chrome.storage.local.set({ lockedTabs });
 
-    // Clear alarm autolock jika ada
+    // Clear auto-lock alarm if scheduled
     await chrome.alarms.clear(`autolock_${tabId}`);
 
-    // Redirect tab ke halaman input password / unlock
-    const encodedTarget = encodeURIComponent(tab.url);
-    const encodedTitle = encodeURIComponent(tab.title || "Halaman Terkunci");
-    const redirectUrl = `${lockPageUrl}?url=${encodedTarget}&title=${encodedTitle}`;
+    // Clean address bar: Only sessionToken is passed, NO URL or Title leaked in query string!
+    const redirectUrl = `${lockPageUrl}?token=${sessionToken}`;
     await chrome.tabs.update(tabId, { url: redirectUrl });
   } catch (err) {
-    console.error("Gagal mengunci tab:", err);
+    console.error("Failed to lock tab:", err);
   }
 }
+
+// Prevent user from hitting "Back" or navigating to another URL without unlocking
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (changeInfo.url) {
+    const lockPageUrl = chrome.runtime.getURL("lock/lock.html");
+    if (!changeInfo.url.startsWith(lockPageUrl)) {
+      // Check if this tab has an active lock token
+      const { lockedTabs = {} } = await chrome.storage.local.get("lockedTabs");
+      for (const [token, data] of Object.entries(lockedTabs)) {
+        if (data.tabId === tabId) {
+          // Tab is supposed to be locked! Reject unauthorized navigation
+          await chrome.tabs.update(tabId, { url: `${lockPageUrl}?token=${token}` });
+          break;
+        }
+      }
+    }
+  }
+});
 
 // ==========================================
 // AUTO-LOCK TRACKING LOGIC (LEAVE TAB TIMER)
 // ==========================================
 
-// Variabel memori tab yang sedang aktif
 let activeTabId = null;
 
-// Lacak saat tab aktif berganti
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   const previousTabId = activeTabId;
   activeTabId = activeInfo.tabId;
 
   const { autoLockTabs = {} } = await chrome.storage.local.get("autoLockTabs");
 
-  // Jika tab sebelumnya ditinggalkan dan terdaftar autoLock, jadwalkan penguncian
   if (previousTabId && autoLockTabs[previousTabId]) {
     const timeout = autoLockTabs[previousTabId].timeoutMinutes || 5;
     chrome.alarms.create(`autolock_${previousTabId}`, {
@@ -81,18 +113,15 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
     });
   }
 
-  // Jika tab yang baru aktif memiliki alarm tertunda, batalkan karena user kembali ke tab ini
   if (activeTabId) {
     chrome.alarms.clear(`autolock_${activeTabId}`);
   }
 });
 
-// Lacak saat jendela browser kehilangan fokus (user beralih ke aplikasi lain)
 chrome.windows.onFocusChanged.addListener(async (windowId) => {
   const { autoLockTabs = {} } = await chrome.storage.local.get("autoLockTabs");
 
   if (windowId === chrome.windows.WINDOW_ID_NONE) {
-    // User berpindah ke aplikasi luar (alt-tab)
     if (activeTabId && autoLockTabs[activeTabId]) {
       const timeout = autoLockTabs[activeTabId].timeoutMinutes || 5;
       chrome.alarms.create(`autolock_${activeTabId}`, {
@@ -100,14 +129,12 @@ chrome.windows.onFocusChanged.addListener(async (windowId) => {
       });
     }
   } else {
-    // User kembali ke browser, batalkan timer tab aktif
     if (activeTabId) {
       chrome.alarms.clear(`autolock_${activeTabId}`);
     }
   }
 });
 
-// Alarm listener saat waktu leave tab habis
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name.startsWith("autolock_")) {
     const tabId = parseInt(alarm.name.replace("autolock_", ""), 10);
@@ -115,18 +142,16 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
     try {
       const tab = await chrome.tabs.get(tabId);
-      // Kunci tab jika masih terbuka
       if (tab) {
         await lockTab(tabId);
       }
     } catch (e) {
-      // Tab mungkin sudah ditutup
       chrome.alarms.clear(alarm.name);
     }
   }
 });
 
-// Hapus tab dari memori lockedTabs dan autoLockTabs jika tab ditutup oleh user
+// Clean up memory if tab is closed by user
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   chrome.alarms.clear(`autolock_${tabId}`);
 
@@ -136,10 +161,13 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   ]);
 
   let changed = false;
-  if (lockedTabs[tabId]) {
-    delete lockedTabs[tabId];
-    changed = true;
+  for (const [token, data] of Object.entries(lockedTabs)) {
+    if (data.tabId === tabId) {
+      delete lockedTabs[token];
+      changed = true;
+    }
   }
+
   if (autoLockTabs[tabId]) {
     delete autoLockTabs[tabId];
     changed = true;
@@ -154,57 +182,95 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   }
 });
 
-// Message listener dari popup atau halaman unlock
+// Handle requests from popup or lock page
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "lockTab") {
     lockTab(request.tabId).then(() => sendResponse({ success: true }));
     return true;
   }
 
+  // Set Master Password using PBKDF2
+  if (request.action === "setPassword") {
+    createPasswordVerifier(request.password).then(async (config) => {
+      await chrome.storage.local.set({ authConfig: config });
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+
+  // Change Password
+  if (request.action === "changePassword") {
+    chrome.storage.local.get("authConfig", async (res) => {
+      const { authConfig } = res;
+      if (!authConfig) {
+        sendResponse({ success: false, error: "No existing password." });
+        return;
+      }
+
+      const isValid = await verifyPassword(request.oldPassword, authConfig.salt, authConfig.verifier);
+      if (!isValid) {
+        sendResponse({ success: false, error: "Current password is incorrect!" });
+        return;
+      }
+
+      // Re-hash new password
+      const newConfig = await createPasswordVerifier(request.newPassword);
+      await chrome.storage.local.set({ authConfig: newConfig });
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+
+  // Unlock Tab
   if (request.action === "unlockTab") {
-    const tabId = (sender.tab && sender.tab.id) || request.tabId;
-    const fallbackTargetUrl = request.targetUrl;
+    const sessionToken = request.token;
 
-    chrome.storage.local.get(["passwordHash", "lockedTabs"], async (res) => {
-      const { passwordHash, lockedTabs = {} } = res;
+    chrome.storage.local.get(["authConfig", "lockedTabs"], async (res) => {
+      const { authConfig, lockedTabs = {} } = res;
 
-      if (!passwordHash) {
+      if (!authConfig) {
         sendResponse({ success: false, error: "Master password not configured." });
         return;
       }
 
-      const inputHash = await hashPassword(request.password);
-      if (inputHash === passwordHash) {
-        let targetUrl = fallbackTargetUrl;
-        if (tabId && lockedTabs[tabId]) {
-          targetUrl = lockedTabs[tabId].targetUrl || targetUrl;
-          delete lockedTabs[tabId];
-          await chrome.storage.local.set({ lockedTabs });
-        }
-
-        if (!targetUrl || targetUrl === "about:blank") {
-          targetUrl = "https://www.google.com";
-        }
-
-        if (tabId) {
-          await chrome.tabs.update(tabId, { url: targetUrl });
-        }
-        sendResponse({ success: true, targetUrl });
-      } else {
+      // 1. Verify password via PBKDF2
+      const isValid = await verifyPassword(request.password, authConfig.salt, authConfig.verifier);
+      if (!isValid) {
         sendResponse({ success: false, error: "Incorrect password!" });
-      }
-    });
-    return true; // async response
-  }
-
-  if (request.action === "verifyPassword") {
-    chrome.storage.local.get("passwordHash", async (res) => {
-      if (!res.passwordHash) {
-        sendResponse({ valid: false, notConfigured: true });
         return;
       }
-      const inputHash = await hashPassword(request.password);
-      sendResponse({ valid: inputHash === res.passwordHash });
+
+      // 2. Decrypt target payload
+      const lockData = lockedTabs[sessionToken];
+      let targetUrl = "https://www.google.com";
+
+      if (lockData && lockData.encryptedPayload) {
+        const decryptedJson = await decryptWithPassword(
+          lockData.encryptedPayload,
+          authConfig.verifier,
+          authConfig.salt
+        );
+
+        if (decryptedJson) {
+          try {
+            const parsed = JSON.parse(decryptedJson);
+            targetUrl = parsed.url;
+          } catch (e) {
+            targetUrl = decryptedJson;
+          }
+        }
+
+        // Remove token from storage
+        delete lockedTabs[sessionToken];
+        await chrome.storage.local.set({ lockedTabs });
+      }
+
+      const tabId = (sender.tab && sender.tab.id) || (lockData && lockData.tabId);
+      if (tabId) {
+        await chrome.tabs.update(tabId, { url: targetUrl });
+      }
+
+      sendResponse({ success: true, targetUrl });
     });
     return true;
   }
