@@ -1,0 +1,26 @@
+{
+  "name": "lock-tab-extension",
+  "version": "1.0.0",
+  "description": "Ekstensi browser (Chrome / Edge / Chromium) berbasis **Manifest V3** untuk mengunci tab aktif dengan kata sandi (password).",
+  "main": "background.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dxnn360/lock-tab-extension.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/dxnn360/lock-tab-extension/issues"
+  },
+  "homepage": "https://github.com/dxnn360/lock-tab-extension#readme",
+  "devDependencies": {
+    "autoprefixer": "^10.6.1",
+    "postcss": "^8.5.29",
+    "tailwindcss": "^3.4.1"
+  }
+}
