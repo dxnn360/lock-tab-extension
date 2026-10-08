@@ -152,6 +152,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   btnLockCurrent.addEventListener("click", () => {
     if (!currentTab || !currentTab.id) return;
     chrome.runtime.sendMessage({ action: "lockTab", tabId: currentTab.id }, (res) => {
+      if (chrome.runtime.lastError) {
+        // Suppress benign port closing error if window closes or tab updates
+        return;
+      }
       if (res?.success) {
         window.close();
       }

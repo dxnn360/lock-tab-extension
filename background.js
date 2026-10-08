@@ -71,8 +71,10 @@ async function lockTab(tabId) {
     // Clean address bar: Only sessionToken is passed, NO URL or Title leaked in query string!
     const redirectUrl = `${lockPageUrl}?token=${sessionToken}`;
     await chrome.tabs.update(tabId, { url: redirectUrl });
+    return true;
   } catch (err) {
     console.error("Failed to lock tab:", err);
+    return false;
   }
 }
 
@@ -185,7 +187,11 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 // Handle requests from popup or lock page
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "lockTab") {
-    lockTab(request.tabId).then(() => sendResponse({ success: true }));
+    lockTab(request.tabId).then((success) => {
+      sendResponse({ success: Boolean(success) });
+    }).catch((err) => {
+      sendResponse({ success: false, error: err.message });
+    });
     return true;
   }
 
