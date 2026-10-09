@@ -100,11 +100,20 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 // AUTO-LOCK TRACKING LOGIC (LEAVE TAB TIMER)
 // ==========================================
 
-let activeTabId = null;
+// Helper to get activeTabId safely
+async function getActiveTabId() {
+  const { activeTabId } = await chrome.storage.local.get("activeTabId");
+  return activeTabId || null;
+}
+
+// Helper to set activeTabId safely
+async function setActiveTabId(tabId) {
+  await chrome.storage.local.set({ activeTabId: tabId });
+}
 
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
-  const previousTabId = activeTabId;
-  activeTabId = activeInfo.tabId;
+  const previousTabId = await getActiveTabId();
+  await setActiveTabId(activeInfo.tabId);
 
   const { autoLockTabs = {} } = await chrome.storage.local.get("autoLockTabs");
 
@@ -122,6 +131,7 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
 
 chrome.windows.onFocusChanged.addListener(async (windowId) => {
   const { autoLockTabs = {} } = await chrome.storage.local.get("autoLockTabs");
+  const activeTabId = await getActiveTabId();
 
   if (windowId === chrome.windows.WINDOW_ID_NONE) {
     if (activeTabId && autoLockTabs[activeTabId]) {
@@ -179,8 +189,9 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
     await chrome.storage.local.set({ lockedTabs, autoLockTabs });
   }
 
+  const activeTabId = await getActiveTabId();
   if (activeTabId === tabId) {
-    activeTabId = null;
+    await chrome.storage.local.remove("activeTabId");
   }
 });
 
